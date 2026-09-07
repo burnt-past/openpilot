@@ -12,7 +12,8 @@ from collections.abc import Callable
 
 from opendbc.car import structs
 from opendbc.car.can_definitions import CanRecvCallable, CanSendCallable
-from opendbc.car.hyundai.values import HyundaiFlags
+from opendbc.car.common.conversions import Conversions as CV
+from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, HyundaiFlags
 from opendbc.car.subaru.values import SubaruFlags
 from opendbc.car.toyota.values import ToyotaSafetyFlags
 from opendbc.sunnypilot.car.hyundai.enable_radar_tracks import enable_radar_tracks as hyundai_enable_radar_tracks
@@ -85,6 +86,8 @@ def setup_interfaces(CI, CP: structs.CarParams, CP_SP: structs.CarParamsSP,
   params_dict = {k: v for param in params_list for k, v in param.items()}
 
   _initialize_custom_longitudinal_tuning(CI, CP, CP_SP, params_dict)
+  _initialize_hyundai_niro_phev_steer_max(CP, CP_SP, params_dict)
+  _initialize_hyundai_niro_phev_min_steer_speed(CP, params_dict)
   _initialize_coop_steering(CP, CP_SP, params_dict)
   _initialize_tesla_mads_screen_button(CP, CP_SP, params_dict)
   _initialize_radar_tracks(CP, CP_SP, can_recv, can_send)
@@ -104,6 +107,62 @@ def _initialize_custom_longitudinal_tuning(CI, CP: structs.CarParams, CP_SP: str
       CP_SP.flags |= HyundaiFlagsSP.LONG_TUNING_PREDICTIVE.value
 
   _ = CI.get_longitudinal_tuning_sp(CP, CP_SP)
+
+
+def _param_int(params_dict: dict[str, str], key: str, default: int) -> int:
+  # Params INT keys may arrive as int, str or bytes depending on how they were read
+  value = params_dict.get(key, default)
+  if isinstance(value, bytes):
+    value = value.decode("utf-8", errors="ignore")
+  if value is None or value == "":
+    return default
+  try:
+    return int(value)
+  except (TypeError, ValueError):
+    return default
+
+
+NIRO_PHEV_STEER_MAX_LEVELS = {
+  1: HyundaiFlagsSP.NIRO_PHEV_STEER_MAX_300,
+  2: HyundaiFlagsSP.NIRO_PHEV_STEER_MAX_340,
+  3: HyundaiFlagsSP.NIRO_PHEV_STEER_MAX_384,
+}
+
+NIRO_PHEV_MIN_STEER_SPEED_STOCK_MPH = 32
+NIRO_PHEV_MIN_STEER_SPEED_FLOOR_MPH = 15
+
+
+def _initialize_hyundai_niro_phev_steer_max(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
+                                             params_dict: dict[str, str]) -> None:
+  # experimental raised LKAS torque ceiling, only ever applied to KIA_NIRO_PHEV; other Hyundai/Kia keep stock limits.
+  # Panda safety (HYUNDAI_STEERING_LIMITS) still enforces 384, so no level here can exceed it.
+  if CP.brand != 'hyundai' or CP.carFingerprint != HYUNDAI_CAR.KIA_NIRO_PHEV:
+    return
+
+  level = _param_int(params_dict, "HyundaiNiroPhevSteerMaxLevel", 0)
+  flag = NIRO_PHEV_STEER_MAX_LEVELS.get(level)
+  if flag is not None:
+    CP_SP.flags |= flag.value
+
+
+def _initialize_hyundai_niro_phev_min_steer_speed(CP: structs.CarParams, params_dict: dict[str, str]) -> None:
+  # experimental: lower the speed at which sunnypilot starts requesting LKAS torque, to probe where the stock MDPS
+  # stops cooperating. Default (32) is stock behaviour. Clamped to [15, 32]; never 0 in this experiment.
+  if CP.brand != 'hyundai' or CP.carFingerprint != HYUNDAI_CAR.KIA_NIRO_PHEV:
+    return
+
+  min_steer_speed_mph = _param_int(params_dict, "HyundaiNiroPhevMinSteerSpeedMph", NIRO_PHEV_MIN_STEER_SPEED_STOCK_MPH)
+  if min_steer_speed_mph >= NIRO_PHEV_MIN_STEER_SPEED_STOCK_MPH:
+    return
+
+  min_steer_speed_mph = max(min_steer_speed_mph, NIRO_PHEV_MIN_STEER_SPEED_FLOOR_MPH)
+  min_steer_speed = min_steer_speed_mph * CV.MPH_TO_MS
+  # never raise the floor, e.g. smartMDPS detection already set it to 0
+  if CP.minSteerSpeed <= min_steer_speed:
+    return
+
+  CP.minSteerSpeed = min_steer_speed
+  CP.flags &= ~HyundaiFlags.MIN_STEER_32_MPH.value
 
 
 def _initialize_coop_steering(CP: structs.CarParams, CP_SP: structs.CarParamsSP,

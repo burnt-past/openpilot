@@ -13,6 +13,7 @@ from opendbc.sunnypilot.car.hyundai.icbm import IntelligentCruiseButtonManagemen
 from opendbc.sunnypilot.car.hyundai.longitudinal.controller import LongitudinalController
 from opendbc.sunnypilot.car.hyundai.lead_data_ext import LeadDataCarController
 from opendbc.sunnypilot.car.hyundai.mads import MadsCarController
+from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
@@ -65,6 +66,15 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     IntelligentCruiseButtonManagementInterface.__init__(self, CP, CP_SP)
     self.CAN = CanBus(CP)
     self.params = CarControllerParams(CP)
+    # experimental raised torque ceiling for KIA_NIRO_PHEV, see HyundaiNiroPhevSteerMaxLevel.
+    # Only the carcontroller instance is overridden; carstate keeps its own stock copy for STEER_THRESHOLD.
+    if CP.carFingerprint == CAR.KIA_NIRO_PHEV:
+      if CP_SP.flags & HyundaiFlagsSP.NIRO_PHEV_STEER_MAX_384:
+        self.params.STEER_MAX = 384
+      elif CP_SP.flags & HyundaiFlagsSP.NIRO_PHEV_STEER_MAX_340:
+        self.params.STEER_MAX = 340
+      elif CP_SP.flags & HyundaiFlagsSP.NIRO_PHEV_STEER_MAX_300:
+        self.params.STEER_MAX = 300
     self.packer = CANPacker(dbc_names[Bus.pt])
     self.angle_limit_counter = 0
 
