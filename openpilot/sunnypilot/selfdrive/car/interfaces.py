@@ -4,13 +4,13 @@ Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
 This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
-import os
 from typing import Any
 
 from opendbc.car import structs
 from opendbc.car.interfaces import CarInterfaceBase
-from openpilot.common.params import Params, UnknownKeyName
+from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
+from openpilot.sunnypilot.common.params_compat import get_param_compat
 from openpilot.sunnypilot.selfdrive.controls.lib.nnlc.helpers import get_nn_model_path
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.helpers import set_speed_limit_assist_availability
 
@@ -141,18 +141,5 @@ def initialize_params(params) -> list[dict[str, Any]]:
     "ToyotaStopAndGoHack",
   ])
 
-  return [{k: _get_param(params, k)} for k in keys]
-
-
-def _get_param(params, key: str):
-  try:
-    return params.get(key, return_default=True)
-  except UnknownKeyName:
-    # Prebuilt branches ship a compiled key table in libparams_c.so, so a key that is only declared in
-    # params_keys.h stays unknown until the next scons build. Read the raw value from disk instead;
-    # the opendbc side parses it and falls back to its own default when it is missing or empty.
-    try:
-      with open(os.path.join(params.get_param_path(), key), "rb") as f:
-        return f.read().decode("utf-8", errors="ignore").strip()
-    except OSError:
-      return None
+  # get_param_compat also works for keys the compiled params table does not know yet (prebuilt branches)
+  return [{k: get_param_compat(params, k)} for k in keys]

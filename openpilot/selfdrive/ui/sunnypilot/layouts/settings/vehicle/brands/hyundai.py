@@ -6,9 +6,14 @@ See the LICENSE.md file in the root directory for more details.
 """
 from openpilot.selfdrive.ui.sunnypilot.layouts.settings.vehicle.brands.base import BrandSettings
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.sunnypilot.common.params_compat import get_param_compat, put_param_compat
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.sunnypilot.widgets.list_view import multiple_button_item_sp
 from opendbc.car.hyundai.values import CAR, UNSUPPORTED_LONGITUDINAL_CAR
+
+# experimental KIA_NIRO_PHEV lateral tuning, see opendbc.sunnypilot.car.interfaces
+NIRO_PHEV_STEER_MAX_LEVELS = (255, 300, 340, 384)  # index == HyundaiNiroPhevSteerMaxLevel
+NIRO_PHEV_MIN_STEER_SPEEDS_MPH = (32, 28, 24, 20, 15)  # HyundaiNiroPhevMinSteerSpeedMph, 32 is stock
 
 
 class HyundaiSettings(BrandSettings):
@@ -20,13 +25,76 @@ class HyundaiSettings(BrandSettings):
     self.longitudinal_tuning_item = multiple_button_item_sp(tr("Custom Longitudinal Tuning"), "", tuning_texts,
                                                             button_width=300, callback=self._on_tuning_selected,
                                                             param="HyundaiLongitudinalTuning", inline=False)
-    self.items = [self.longitudinal_tuning_item]
+    # KIA_NIRO_PHEV only. These params are not passed to the widgets on purpose: on a prebuilt branch the
+    # compiled params table does not know them, so reads and writes go through params_compat instead.
+    steer_max_texts = [tr("Stock")] + [str(v) for v in NIRO_PHEV_STEER_MAX_LEVELS[1:]]
+    self.niro_steer_max_item = multiple_button_item_sp(tr("Niro PHEV Max Steer Torque"), "", steer_max_texts,
+                                                       button_width=250, callback=self._on_niro_steer_max_selected, inline=False)
+    min_steer_speed_texts = [tr("Stock")] + [str(v) for v in NIRO_PHEV_MIN_STEER_SPEEDS_MPH[1:]]
+    self.niro_min_steer_speed_item = multiple_button_item_sp(tr("Niro PHEV Min Steer Speed (mph)"), "", min_steer_speed_texts,
+                                                             button_width=250, callback=self._on_niro_min_steer_speed_selected, inline=False)
+    self.items = [self.longitudinal_tuning_item, self.niro_steer_max_item, self.niro_min_steer_speed_item]
 
   @staticmethod
   def _on_tuning_selected(index):
     ui_state.params.put("HyundaiLongitudinalTuning", index)
 
+  @staticmethod
+  def _on_niro_steer_max_selected(index):
+    put_param_compat(ui_state.params, "HyundaiNiroPhevSteerMaxLevel", index)
+
+  @staticmethod
+  def _on_niro_min_steer_speed_selected(index):
+    put_param_compat(ui_state.params, "HyundaiNiroPhevMinSteerSpeedMph", NIRO_PHEV_MIN_STEER_SPEEDS_MPH[index])
+
+  @staticmethod
+  def _get_platform():
+    bundle = ui_state.params.get("CarPlatformBundle")
+    if bundle:
+      return bundle.get("platform")
+    if ui_state.CP is not None:
+      return ui_state.CP.carFingerprint
+    return None
+
+  @staticmethod
+  def _param_int(key: str, default: int) -> int:
+    try:
+      return int(get_param_compat(ui_state.params, key) or default)
+    except (TypeError, ValueError):
+      return default
+
+  def _update_niro_phev_settings(self):
+    is_niro_phev = self._get_platform() == CAR.KIA_NIRO_PHEV
+    self.niro_steer_max_item.set_visible(is_niro_phev)
+    self.niro_min_steer_speed_item.set_visible(is_niro_phev)
+    if not is_niro_phev:
+      return
+
+    offroad = ui_state.is_offroad()
+    onroad_desc = tr("This feature is unavailable while the car is onroad.")
+
+    level = self._param_int("HyundaiNiroPhevSteerMaxLevel", 0)
+    if level not in range(len(NIRO_PHEV_STEER_MAX_LEVELS)):
+      level = 0
+    steer_max_desc = tr("Experimental. Raises the LKAS torque ceiling openpilot may request. Panda safety still enforces 384. " +
+                        "Applies at the next ignition on. Current: {} (stock is 255).").format(NIRO_PHEV_STEER_MAX_LEVELS[level])
+    self.niro_steer_max_item.action_item.set_enabled(offroad)
+    self.niro_steer_max_item.set_description(steer_max_desc if offroad else onroad_desc)
+    self.niro_steer_max_item.show_description(True)
+    self.niro_steer_max_item.action_item.set_selected_button(level)
+
+    speed = self._param_int("HyundaiNiroPhevMinSteerSpeedMph", NIRO_PHEV_MIN_STEER_SPEEDS_MPH[0])
+    speed_index = NIRO_PHEV_MIN_STEER_SPEEDS_MPH.index(speed) if speed in NIRO_PHEV_MIN_STEER_SPEEDS_MPH else 0
+    min_speed_desc = tr("Experimental. Lowers the speed at which sunnypilot starts steering, to test whether the stock MDPS accepts torque " +
+                        "below 32 mph. Applies at the next ignition on. Current: {} mph (stock is 32).").format(NIRO_PHEV_MIN_STEER_SPEEDS_MPH[speed_index])
+    self.niro_min_steer_speed_item.action_item.set_enabled(offroad)
+    self.niro_min_steer_speed_item.set_description(min_speed_desc if offroad else onroad_desc)
+    self.niro_min_steer_speed_item.show_description(True)
+    self.niro_min_steer_speed_item.action_item.set_selected_button(speed_index)
+
   def update_settings(self):
+    self._update_niro_phev_settings()
+
     self.alpha_long_available = False
     bundle = ui_state.params.get("CarPlatformBundle")
     if bundle:
