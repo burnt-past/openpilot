@@ -10,12 +10,21 @@ from openpilot.common.params import Params, UnknownKeyName
 
 # Prebuilt branches ship a compiled key table in libparams_c.so, so a key that is only declared in
 # params_keys.h stays unknown to Params until the next scons build. These helpers use Params when the
-# key is known and fall back to the raw file in the params directory otherwise, so a param-driven
-# feature added on top of a prebuilt release can be read and written without a rebuild.
+# key is known and fall back to a raw file otherwise, so a param-driven feature added on top of a
+# prebuilt release can be read and written without a rebuild.
+#
+# The fallback file must NOT live inside the params directory itself: Params::clearAll, which manager
+# runs on start and on every onroad/offroad transition, deletes every file there whose name is not in
+# the compiled key table. The fallback directory is a sibling of it (e.g. /data/params/d_sp_compat),
+# which that sweep never touches and which is wiped together with the params on a reinstall.
+
+
+def compat_dir(params: Params) -> str:
+  return f"{params.get_param_path().rstrip('/')}_sp_compat"
 
 
 def _param_file(params: Params, key: str) -> str:
-  return os.path.join(params.get_param_path(), key)
+  return os.path.join(compat_dir(params), key)
 
 
 def get_param_compat(params: Params, key: str):

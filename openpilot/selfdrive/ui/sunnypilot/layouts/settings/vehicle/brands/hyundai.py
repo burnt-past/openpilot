@@ -26,7 +26,8 @@ class HyundaiSettings(BrandSettings):
                                                             button_width=300, callback=self._on_tuning_selected,
                                                             param="HyundaiLongitudinalTuning", inline=False)
     # KIA_NIRO_PHEV only. These params are not passed to the widgets on purpose: on a prebuilt branch the
-    # compiled params table does not know them, so reads and writes go through params_compat instead.
+    # compiled params table does not know them, so reads and writes go through params_compat instead
+    # (stored next to the params directory, where the onroad/offroad sweep does not delete them).
     steer_max_texts = [tr("Stock")] + [str(v) for v in NIRO_PHEV_STEER_MAX_LEVELS[1:]]
     self.niro_steer_max_item = multiple_button_item_sp(tr("Niro PHEV Max Steer Torque"), "", steer_max_texts,
                                                        button_width=250, callback=self._on_niro_steer_max_selected, inline=False)
